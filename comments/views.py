@@ -39,21 +39,26 @@ def add_comment(request):
     text = escape(text)
     user_list = []
     temp_text = text.split()
-    new_text = ""
-    new_msg = ""
+    new_text_parts = []
+    new_msg_parts = []
     for item in temp_text:
         msg = item
         if item and item[0] == "@" and len(item) > 1:
             username = item[1:]
-            if User.objects.filter(username=username).exists():
+            try:
                 user = User.objects.get(username=username)
                 user_list.append(user)
                 msg = user.username
                 safe_username = escape(user.username)
                 item = "<a href='/profile/{0}'>@{1}</a>".format(safe_username, safe_username)
+            except User.DoesNotExist:
+                pass
 
-        new_text = new_text + " " + item
-        new_msg = new_msg + " " + msg
+        new_text_parts.append(item)
+        new_msg_parts.append(msg)
+
+    new_text = " ".join(new_text_parts)
+    new_msg = " ".join(new_msg_parts)
 
     for obj in user_list:
         msg_plain = render_to_string(
@@ -78,7 +83,8 @@ def add_comment(request):
         send_mail(
             "You have been mentioned in a comment",
             msg_plain,
-            settings.EMAIL_TO_STRING[obj.email],
+            settings.EMAIL_TO_STRING,
+            [obj.email],
             html_message=msg_html,
         )
 
