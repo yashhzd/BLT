@@ -19,6 +19,61 @@ from .models import Comment
 VALID_CALLBACK_RE = re.compile(r"^[a-zA-Z_$][a-zA-Z0-9_$.]*$")
 
 
+def _process_mentions(text):
+    """Parse @mentions from text, return (processed_html, plain_msg, mentioned_users)."""
+    escaped = escape(text)
+    tokens = escaped.split()
+    text_parts = []
+    msg_parts = []
+    mentioned_users = []
+    for token in tokens:
+        msg = token
+        if token and token[0] == "@" and len(token) > 1:
+            username = token[1:]
+            try:
+                user = User.objects.get(username=username)
+                mentioned_users.append(user)
+                msg = user.username
+                safe_username = escape(user.username)
+                token = "<a href='/profile/{0}'>@{1}</a>".format(safe_username, safe_username)
+            except User.DoesNotExist:
+                pass
+        text_parts.append(token)
+        msg_parts.append(msg)
+    return " ".join(text_parts), " ".join(msg_parts), mentioned_users
+
+
+def _notify_mentioned_users(mentioned_users, request_user, issue_pk, plain_msg):
+    """Send email notifications to mentioned users."""
+    for obj in mentioned_users:
+        msg_plain = render_to_string(
+            "email/comment_mention.html",
+            {
+                "name": obj.username,
+                "commentor": request_user,
+                "issue_pk": issue_pk,
+                "comment": plain_msg,
+            },
+        )
+        msg_html = render_to_string(
+            "email/comment_mention.html",
+            {
+                "name": obj.username,
+                "commentor": request_user,
+                "issue_pk": issue_pk,
+                "comment": plain_msg,
+            },
+        )
+
+        send_mail(
+            "You have been mentioned in a comment",
+            msg_plain,
+            settings.EMAIL_TO_STRING,
+            [obj.email],
+            html_message=msg_html,
+        )
+
+
 @login_required(login_url="/accounts/login/")
 def add_comment(request):
     if request.method != "POST":
@@ -36,57 +91,8 @@ def add_comment(request):
     author = request.user.username
     author_url = os.path.join("/profile/", request.user.username)
     text = request.POST.get("text_comment", "")
-    text = escape(text)
-    user_list = []
-    temp_text = text.split()
-    new_text_parts = []
-    new_msg_parts = []
-    for item in temp_text:
-        msg = item
-        if item and item[0] == "@" and len(item) > 1:
-            username = item[1:]
-            try:
-                user = User.objects.get(username=username)
-                user_list.append(user)
-                msg = user.username
-                safe_username = escape(user.username)
-                item = "<a href='/profile/{0}'>@{1}</a>".format(safe_username, safe_username)
-            except User.DoesNotExist:
-                pass
-
-        new_text_parts.append(item)
-        new_msg_parts.append(msg)
-
-    new_text = " ".join(new_text_parts)
-    new_msg = " ".join(new_msg_parts)
-
-    for obj in user_list:
-        msg_plain = render_to_string(
-            "email/comment_mention.html",
-            {
-                "name": obj.username,
-                "commentor": request.user,
-                "issue_pk": pk,
-                "comment": new_msg,
-            },
-        )
-        msg_html = render_to_string(
-            "email/comment_mention.html",
-            {
-                "name": obj.username,
-                "commentor": request.user,
-                "issue_pk": pk,
-                "comment": new_msg,
-            },
-        )
-
-        send_mail(
-            "You have been mentioned in a comment",
-            msg_plain,
-            settings.EMAIL_TO_STRING,
-            [obj.email],
-            html_message=msg_html,
-        )
+    new_text, new_msg, mentioned_users = _process_mentions(text)
+    _notify_mentioned_users(mentioned_users, request.user, pk, new_msg)
 
     comment = Comment(author=author, author_url=author_url, issue=issue, text=new_text)
     comment.save()
@@ -140,8 +146,12 @@ def edit_comment(request, pk):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
+    issue_pk = request.POST.get("issue_pk")
+    if str(pk) != str(issue_pk):
+        return HttpResponseBadRequest("URL issue ID does not match POST body")
+
     try:
-        issue = Issue.objects.get(pk=request.POST.get("issue_pk"))
+        issue = Issue.objects.get(pk=issue_pk)
     except (Issue.DoesNotExist, ValueError, TypeError):
         return HttpResponseBadRequest("Invalid issue")
 
@@ -168,6 +178,10 @@ def reply_comment(request, pk):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
+    issue_pk = request.POST.get("issue_pk")
+    if str(pk) != str(issue_pk):
+        return HttpResponseBadRequest("URL issue ID does not match POST body")
+
     parent_id = request.POST.get("parent_id")
     if not parent_id:
         return HttpResponseBadRequest("Missing parent_id")
@@ -186,13 +200,15 @@ def reply_comment(request, pk):
     author_url = os.path.join("/profile/", request.user.username)
 
     try:
-        issue = Issue.objects.get(pk=request.POST.get("issue_pk"))
+        issue = Issue.objects.get(pk=issue_pk)
     except (Issue.DoesNotExist, ValueError, TypeError):
         return HttpResponseBadRequest("Invalid issue")
 
     reply_text = request.POST.get("text_comment", "")
-    reply_text = escape(reply_text)
-    comment = Comment(author=author, author_url=author_url, issue=issue, text=reply_text, parent=parent_obj)
+    new_text, new_msg, mentioned_users = _process_mentions(reply_text)
+    _notify_mentioned_users(mentioned_users, request.user, issue_pk, new_msg)
+
+    comment = Comment(author=author, author_url=author_url, issue=issue, text=new_text, parent=parent_obj)
     comment.save()
     all_comment = Comment.objects.filter(issue=issue)
     return render(
