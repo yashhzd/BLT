@@ -1,22 +1,15 @@
-import json
-import os
-import re
-
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-from django.http import HttpResponseBadRequest, HttpResponseForbidden, HttpResponseNotAllowed
-from django.shortcuts import HttpResponse, render
+from django.http import HttpResponseBadRequest, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
+from django.shortcuts import render
 from django.template.loader import render_to_string
-from django.utils.html import escape
+from django.utils.html import escape, strip_tags
 
 from website.models import Issue
 
 from .models import Comment
-
-# Only allow alphanumeric, underscore, dot for JSONP callback names
-VALID_CALLBACK_RE = re.compile(r"^[a-zA-Z_$][a-zA-Z0-9_$.]*$")
 
 
 def _process_mentions(text):
@@ -46,24 +39,14 @@ def _process_mentions(text):
 def _notify_mentioned_users(mentioned_users, request_user, issue_pk, plain_msg):
     """Send email notifications to mentioned users."""
     for obj in mentioned_users:
-        msg_plain = render_to_string(
-            "email/comment_mention.html",
-            {
-                "name": obj.username,
-                "commentor": request_user,
-                "issue_pk": issue_pk,
-                "comment": plain_msg,
-            },
-        )
-        msg_html = render_to_string(
-            "email/comment_mention.html",
-            {
-                "name": obj.username,
-                "commentor": request_user,
-                "issue_pk": issue_pk,
-                "comment": plain_msg,
-            },
-        )
+        template_context = {
+            "name": obj.username,
+            "commentor": request_user,
+            "issue_pk": issue_pk,
+            "comment": plain_msg,
+        }
+        msg_html = render_to_string("email/comment_mention.html", template_context)
+        msg_plain = strip_tags(msg_html)
 
         send_mail(
             "You have been mentioned in a comment",
@@ -89,7 +72,7 @@ def add_comment(request):
         return HttpResponseBadRequest("Issue not found")
 
     author = request.user.username
-    author_url = os.path.join("/profile/", request.user.username)
+    author_url = f"/profile/{request.user.username}"
     text = request.POST.get("text_comment", "")
     new_text, new_msg, mentioned_users = _process_mentions(text)
     _notify_mentioned_users(mentioned_users, request.user, pk, new_msg)
@@ -125,6 +108,9 @@ def delete_comment(request):
         show = comment.parent.pk
     except Exception:
         show = -1
+
+    if comment.issue_id != issue.pk:
+        return HttpResponseBadRequest("Comment does not belong to this issue")
 
     if request.user.username != comment.author:
         return HttpResponseForbidden("Cannot delete this comment")
@@ -197,7 +183,7 @@ def reply_comment(request, pk):
         return HttpResponseBadRequest("Parent comment not found")
 
     author = request.user.username
-    author_url = os.path.join("/profile/", request.user.username)
+    author_url = f"/profile/{request.user.username}"
 
     try:
         issue = Issue.objects.get(pk=issue_pk)
@@ -220,22 +206,17 @@ def reply_comment(request, pk):
 
 @login_required(login_url="/accounts/login")
 def autocomplete(request):
-    callback = request.GET.get("callback", "")
-    if not callback or not VALID_CALLBACK_RE.match(callback):
-        return HttpResponseBadRequest("Invalid callback parameter")
-
     q_string = request.GET.get("search", "")
     q_string = escape(q_string)
     if len(q_string) == 0:
-        return HttpResponse(callback + "(" + json.dumps([]) + ");", content_type="application/json")
+        return JsonResponse([], safe=False)
 
     q_list = q_string.split(" ")
     q_s = q_list[-1]
     if len(q_s) == 0 or q_s[0] != "@":
-        return HttpResponse(callback + "(" + json.dumps([]) + ");", content_type="application/json")
+        return JsonResponse([], safe=False)
 
     q_s = q_s[1:]
     search_qs = User.objects.filter(username__startswith=q_s)[:20]
     results = [r.username for r in search_qs]
-    resp = callback + "(" + json.dumps(results) + ");"
-    return HttpResponse(resp, content_type="application/json")
+    return JsonResponse(results, safe=False)

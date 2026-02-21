@@ -95,7 +95,7 @@ $(function () {
         var issue_id = $('#issue_pk').val();
         var comment = $(this).prev().find('textarea').val();
         if (comment == '') return;
-        var csrftoken = $("[name=csrfmiddlewaretoken]").val();
+        var csrftoken = $('#comments input[name=csrfmiddlewaretoken]').val();
         $.ajax({
             type: 'POST',
             url: '/issue/' + issue_id + '/comment/edit/',
@@ -126,7 +126,7 @@ $(function () {
         var issue_id = $('#issue_pk').val();
         var comment = $(this).prev().find('textarea').val();
         if (comment == '') return;
-        var csrftoken = $("[name=csrfmiddlewaretoken]").val();
+        var csrftoken = $('#comments input[name=csrfmiddlewaretoken]').val();
         $.ajax({
             type: 'POST',
             url: '/issue/' + issue_id + '/comment/reply/',
@@ -145,16 +145,16 @@ $(function () {
         });
     });
 
-    $('body').on('input, keyup', 'textarea', function () {
+    $('body').on('input keyup', 'textarea', function () {
         var search = $(this).val();
-        var data = {search: search};
         $.ajax({
             type: 'GET',
             url: '/comment/autocomplete/',
-            data: data,
-            dataType: 'jsonp',
-            jsonp: 'callback',
-            jsonpCallback: 'renderer',
+            data: {search: search},
+            dataType: 'json',
+            success: function (data) {
+                renderer(data);
+            }
         });
     });
 
