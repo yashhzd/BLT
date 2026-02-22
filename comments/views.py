@@ -146,6 +146,9 @@ def edit_comment(request, pk):
     except (Comment.DoesNotExist, ValueError, TypeError):
         return HttpResponseBadRequest("Comment not found")
 
+    if comment.issue_id != issue.pk:
+        return HttpResponseBadRequest("Comment does not belong to this issue")
+
     if request.user.username != comment.author:
         return HttpResponseForbidden("Cannot edit this comment")
 
@@ -189,6 +192,9 @@ def reply_comment(request, pk):
         issue = Issue.objects.get(pk=issue_pk)
     except (Issue.DoesNotExist, ValueError, TypeError):
         return HttpResponseBadRequest("Invalid issue")
+
+    if parent_obj.issue_id != issue.pk:
+        return HttpResponseBadRequest("Parent comment does not belong to this issue")
 
     reply_text = request.POST.get("text_comment", "")
     new_text, new_msg, mentioned_users = _process_mentions(reply_text)
