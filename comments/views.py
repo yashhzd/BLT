@@ -39,6 +39,8 @@ def _process_mentions(text):
 def _notify_mentioned_users(mentioned_users, request_user, issue_pk, plain_msg):
     """Send email notifications to mentioned users."""
     for obj in mentioned_users:
+        if not obj.email:
+            continue
         template_context = {
             "name": obj.username,
             "commentor": request_user,
@@ -152,7 +154,10 @@ def edit_comment(request, pk):
     if request.user.username != comment.author:
         return HttpResponseForbidden("Cannot edit this comment")
 
-    comment.text = escape(request.POST.get("text_comment", ""))
+    raw_text = request.POST.get("text_comment", "")
+    new_text, new_msg, mentioned_users = _process_mentions(raw_text)
+    _notify_mentioned_users(mentioned_users, request.user, issue_pk, new_msg)
+    comment.text = new_text
     comment.save()
     all_comment = Comment.objects.filter(issue=issue)
     return render(
@@ -213,7 +218,6 @@ def reply_comment(request, pk):
 @login_required(login_url="/accounts/login")
 def autocomplete(request):
     q_string = request.GET.get("search", "")
-    q_string = escape(q_string)
     if len(q_string) == 0:
         return JsonResponse([], safe=False)
 
